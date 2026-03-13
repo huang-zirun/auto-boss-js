@@ -1,0 +1,8 @@
+{
+  "name": "auto-boss",
+  "private": true,
+  "scripts": {
+    "dev": "npx --yes serve -p 61077 -l 61077 .",
+    "copy": "node copy-to-clipboard.js"
+  }
+}
