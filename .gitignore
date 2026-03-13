@@ -1,2 +1,19 @@
-.clipboard-tmp.txt
+# 依赖
 node_modules
+
+# 剪贴板临时文件
+.clipboard-tmp.txt
+
+# 含 Cookie/敏感信息的配置，勿提交
+config.js
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+*.log
+.env
+.env.local
+
+# IDE（可选）
+.idea
+.vscode
