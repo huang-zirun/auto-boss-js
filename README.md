@@ -52,6 +52,10 @@ auto-boss/
 | filterDegree | 学历要求多选 | ['不限'] |
 | filterVipEnabled | 是否启用 VIP 筛选（双一流/985/211 等） | true |
 | filterVipManual | 手动勾选「我是 VIP」 | false |
+| filterVipSchool | VIP 学校筛选 | ['双一流院校', '985', '211'] |
+| filterVipExchangeResume | 交换简历筛选 | '近一个月没有' |
+| filterVipMajor | 专业多选，空数组=不限 | [] |
+| filterVipRecentNotView | 近期没有看过：'不限' 或 '近14天没有' | '不限' |
 | stopOnDailyLimit | 检测到每日上限弹窗是否停止 | true |
 
 每日打招呼上限 100 次（自然日 0 点重置），可在脚本内修改 `DAILY_GREET_LIMIT`。

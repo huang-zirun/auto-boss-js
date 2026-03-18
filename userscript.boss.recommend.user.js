@@ -49,6 +49,8 @@
     filterVipManual: false,
     filterVipSchool: ['双一流院校', '985', '211'],
     filterVipExchangeResume: '近一个月没有',
+    filterVipMajor: [],          // 专业多选，空数组=不限
+    filterVipRecentNotView: '不限', // 近期没有看过：'不限' 或 '近14天没有'
     stopOnDailyLimit: true,
   };
 
@@ -350,6 +352,28 @@
             </div>
           </div>
         </div>
+        <div class="bp-section bp-vip-section">
+          <div class="bp-label" style="margin-bottom: 6px; display: block;">近期没有看过（VIP）:</div>
+          <div class="bp-degree-row">
+            <div class="bp-degree-item">
+              <input type="radio" name="bp-vip-recent-not-view" id="bp-vip-recent-not-view-不限" ${config.filterVipRecentNotView === '不限' ? 'checked' : ''} value="不限">
+              <label for="bp-vip-recent-not-view-不限">不限</label>
+            </div>
+            <div class="bp-degree-item">
+              <input type="radio" name="bp-vip-recent-not-view" id="bp-vip-recent-not-view-近14天没有" ${config.filterVipRecentNotView === '近14天没有' ? 'checked' : ''} value="近14天没有">
+              <label for="bp-vip-recent-not-view-近14天没有">近14天没有</label>
+            </div>
+          </div>
+        </div>
+        <div class="bp-section bp-vip-section">
+          <div class="bp-label" style="margin-bottom: 6px; display: block;">
+            专业（VIP）:
+            <span id="bp-vip-major-refresh" style="cursor:pointer;font-size:11px;color:#4a90e2;margin-left:6px;" title="从页面读取当前岗位的专业选项">↻ 刷新</span>
+          </div>
+          <div id="bp-vip-major-list" class="bp-degree-row" style="flex-wrap:wrap;gap:4px;">
+            <span style="color:#999;font-size:12px;">点击「↻ 刷新」从页面读取专业选项</span>
+          </div>
+        </div>
         <div class="bp-status">
           已打招呼: <span class="bp-status-count" id="bp-count">0</span>/${DAILY_GREET_LIMIT}
         </div>
@@ -404,6 +428,7 @@
     const degreeCheckboxes = panelEl.querySelectorAll('[id^="bp-degree-"]');
     const vipSchoolCheckboxes = panelEl.querySelectorAll('[id^="bp-vip-school-"]');
     const vipExchangeRadios = panelEl.querySelectorAll('input[name="bp-vip-exchange"]');
+    const vipRecentNotViewRadios = panelEl.querySelectorAll('input[name="bp-vip-recent-not-view"]');
 
     const saveSettings = () => {
       const config = getConfig();
@@ -432,6 +457,19 @@
       const exchangeChecked = Array.from(vipExchangeRadios).find(r => r.checked);
       config.filterVipExchangeResume = exchangeChecked ? exchangeChecked.value : '近一个月没有';
 
+      const recentNotViewChecked = Array.from(vipRecentNotViewRadios).find(r => r.checked);
+      config.filterVipRecentNotView = recentNotViewChecked ? recentNotViewChecked.value : '不限';
+
+      // 专业：从动态渲染的 checkbox 读取
+      const majorList = panelEl.querySelector('#bp-vip-major-list');
+      if (majorList) {
+        const selectedMajors = [];
+        majorList.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+          if (cb.checked) selectedMajors.push(cb.value);
+        });
+        config.filterVipMajor = selectedMajors;
+      }
+
       // 同步到 filterOptions
       if (selectedDegrees.length > 0) {
         config.filterOptions = { '学历要求': selectedDegrees };
@@ -448,6 +486,98 @@
     degreeCheckboxes.forEach(cb => cb.addEventListener('change', saveSettings));
     vipSchoolCheckboxes.forEach(cb => cb.addEventListener('change', saveSettings));
     vipExchangeRadios.forEach(r => r.addEventListener('change', saveSettings));
+    vipRecentNotViewRadios.forEach(r => r.addEventListener('change', saveSettings));
+
+    // 专业刷新按钮：从页面 VIP 筛选区读取当前岗位的专业选项
+    const majorRefreshBtn = panelEl.querySelector('#bp-vip-major-refresh');
+    if (majorRefreshBtn) {
+      majorRefreshBtn.addEventListener('click', async () => {
+        majorRefreshBtn.style.pointerEvents = 'none';
+        majorRefreshBtn.textContent = '⏳ 读取中...';
+        await refreshMajorOptions(saveSettings);
+        majorRefreshBtn.textContent = '↻ 刷新';
+        majorRefreshBtn.style.pointerEvents = '';
+      });
+    }
+  }
+
+  /**
+   * 从页面 VIP 筛选区读取「专业」选项，动态渲染到面板的专业列表中
+   * 若筛选面板未打开，会自动打开后再读取
+   * @param {Function} onChangeCb - 选项变更后的回调（用于保存配置）
+   */
+  async function refreshMajorOptions(onChangeCb) {
+    const majorListEl = panelEl && panelEl.querySelector('#bp-vip-major-list');
+    if (!majorListEl) return;
+
+    majorListEl.innerHTML = '<span style="color:#999;font-size:12px;">正在读取...</span>';
+
+    /** 在所有 doc 里找「专业」filter-wrap */
+    const findMajorWrap = () => {
+      const docs = getFilterDocs();
+      for (const d of docs) {
+        const wraps = getVipFilterWraps(d);
+        const w = wraps.find((w) => (w.querySelector('.name')?.textContent || '').trim().includes('专业'));
+        if (w) return w;
+      }
+      return null;
+    };
+
+    // 先尝试直接找（面板已打开的情况）
+    let majorWrap = findMajorWrap();
+
+    // 找不到则自动打开筛选面板，最多等 3 秒
+    if (!majorWrap) {
+      logAction('专业刷新：筛选面板未打开，自动打开中...');
+      const docs = getFilterDocs();
+      for (const d of docs) {
+        if (await openFilterPanel(d)) break;
+      }
+      // 轮询等待专业 wrap 出现，最多 3s
+      for (let i = 0; i < 15; i++) {
+        await delaySeconds(0.2);
+        majorWrap = findMajorWrap();
+        if (majorWrap) break;
+      }
+    }
+
+    if (!majorWrap) {
+      majorListEl.innerHTML = '<span style="color:#f5a623;font-size:12px;">未找到专业筛选项（当前岗位可能无专业筛选）</span>';
+      return;
+    }
+
+    // 收集所有选项（排除「不限」）
+    const optionEls = majorWrap.querySelectorAll('.check-box .option');
+    const options = [];
+    for (const el of optionEls) {
+      const text = (el.textContent || '').trim();
+      if (text && text !== '不限') options.push(text);
+    }
+
+    if (options.length === 0) {
+      majorListEl.innerHTML = '<span style="color:#999;font-size:12px;">未找到专业选项</span>';
+      return;
+    }
+
+    const config = getConfig();
+    // 若从未保存过专业配置（空数组），则默认全选
+    const savedMajors = Array.isArray(config.filterVipMajor) && config.filterVipMajor.length > 0
+      ? new Set(config.filterVipMajor)
+      : null; // null 表示全选
+
+    majorListEl.innerHTML = options.map((opt) => `
+      <div class="bp-degree-item">
+        <input type="checkbox" id="bp-vip-major-${encodeURIComponent(opt)}" value="${opt}" ${savedMajors === null || savedMajors.has(opt) ? 'checked' : ''}>
+        <label for="bp-vip-major-${encodeURIComponent(opt)}" style="font-size:12px;">${opt}</label>
+      </div>
+    `).join('');
+
+    // 绑定 change 事件
+    majorListEl.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.addEventListener('change', onChangeCb);
+    });
+
+    logAction(`专业选项已刷新，共 ${options.length} 项`);
   }
 
   function togglePanel(forceMinimize) {
@@ -804,7 +934,7 @@
   }
 
   /** VIP 筛选项的 name 文案特征（用于在 .vip-filters-wrap 缺失时按文案兜底） */
-  const VIP_FILTER_NAME_KEYWORDS = ['院校', '是否与同事交换简历', '交换简历'];
+  const VIP_FILTER_NAME_KEYWORDS = ['院校', '是否与同事交换简历', '交换简历', '专业', '近期没有看过'];
 
   /** 只取 VIP 区可点击的 .filter-wrap（在 .vip-filters-wrap 内且不在 .vip-mask 下）；若无该容器则按 name 文案兜底 */
   function getVipFilterWraps(doc) {
@@ -953,18 +1083,20 @@
   }
 
   /**
-   * 应用 VIP 筛选：院校（多选）、是否与同事交换简历（单选）
+   * 应用 VIP 筛选：院校（多选）、是否与同事交换简历（单选）、近期没有看过（单选）、专业（多选）
    * @param {Document} doc
    * @param {string[]} schoolArr - 院校选项，如 ['双一流院校','985','211']
    * @param {string} exchangeResumeValue - '不限' 或 '近一个月没有'
+   * @param {string} recentNotView - '不限' 或 '近14天没有'
+   * @param {string[]} majorArr - 专业选项，空数组=不限
    */
-  async function applyVipFilters(doc, schoolArr, exchangeResumeValue) {
+  async function applyVipFilters(doc, schoolArr, exchangeResumeValue, recentNotView, majorArr) {
     const wraps = getVipFilterWraps(doc);
     if (wraps.length === 0) {
       logAction('未检测到可用的 VIP 筛选项，跳过 VIP 筛选');
       return;
     }
-    logAction('当前动作: 应用 VIP 筛选项（院校、交换简历）');
+    logAction('当前动作: 应用 VIP 筛选项（院校、交换简历、近期没有看过、专业）');
 
     for (const wrap of wraps) {
       const nameEl = wrap.querySelector('.name');
@@ -1005,35 +1137,82 @@
           await delaySeconds(0.2);
           break;
         }
+        continue;
+      }
+
+      if (nameText.includes('近期没有看过')) {
+        const want = String(recentNotView || '不限').trim();
+        if (want === '不限') continue; // 不限则跳过，保持默认
+        const optionEls = wrap.querySelectorAll('.check-box .option');
+        for (const el of optionEls) {
+          const text = (el.textContent || '').trim();
+          if (text !== want) continue;
+          if (isFilterOptionSelected(el)) {
+            logAction(`VIP 筛选项 [${nameText}] -> 「${text}」已选中，跳过`);
+            break;
+          }
+          logAction(`VIP 筛选项 [${nameText}] -> 点击「${text}」`);
+          el.click();
+          await delaySeconds(0.2);
+          break;
+        }
+        continue;
+      }
+
+      if (nameText.includes('专业')) {
+        const targetSet = new Set(Array.isArray(majorArr) ? majorArr.map((s) => String(s).trim()).filter(Boolean) : []);
+        if (targetSet.size === 0) continue; // 空=不限，跳过
+        const optionEls = wrap.querySelectorAll('.check-box .option');
+        for (const el of optionEls) {
+          const text = (el.textContent || '').trim();
+          if (!text) continue;
+          const wantSelected = targetSet.has(text);
+          const isSelected = isFilterOptionSelected(el);
+          if (wantSelected === isSelected) continue;
+          logAction(`VIP 筛选项 [${nameText}] -> ${wantSelected ? '勾选' : '取消'}「${text}」`);
+          el.click();
+          await delaySeconds(0.2);
+        }
+        continue;
       }
     }
   }
 
   async function confirmFilter(doc) {
-    if (!doc) return false;
     logAction('当前动作: 点击确定应用筛选');
-    const candidates = doc.querySelectorAll(
-      [SELECTORS.filterConfirm, 'button', 'div[class*="btn"]', '[class*="confirm"]', '[class*="submit"]', '.confirm-btn', '.btn-primary'].join(', ')
-    );
-    for (const btn of candidates) {
-      const text = (btn.textContent || '').trim();
-      if (text === '确定' || text === '确认' || text === '应用') {
-        btn.click();
-        logAction(`已点击「${text}」`);
-        return true;
+
+    // 确定按钮在主文档的 .filter-panel 内，优先从主文档查找
+    const docsToSearch = [document, doc].filter(Boolean);
+    const seen = new Set();
+    const uniqueDocs = docsToSearch.filter(d => { if (seen.has(d)) return false; seen.add(d); return true; });
+
+    for (const d of uniqueDocs) {
+      if (!d) continue;
+      // 优先在 .filter-panel 容器内找，精准匹配避免误触其他 div.btn
+      const panelRoots = [
+        d.querySelector('.filter-panel'),
+        d.querySelector('.filters-wrap'),
+        d.body,
+      ].filter(Boolean);
+
+      for (const root of panelRoots) {
+        const candidates = root.querySelectorAll('div.btn, button, [class*="confirm"], [class*="submit"], .btn-primary');
+        for (const btn of candidates) {
+          const text = (btn.textContent || '').trim();
+          if (text === '确定' || text === '确认' || text === '应用') {
+            btn.click();
+            logAction(`已点击「${text}」（在 ${d === document ? '主文档' : '子文档'} .${root.className || root.tagName} 内）`);
+            return true;
+          }
+        }
       }
     }
-    const fallback = clickByText(doc, ['确定', '确认', '应用']);
-    if (fallback) {
-      fallback.click();
-      logAction(`已点击「${(fallback.textContent || '').trim()}」（文案兜底）`);
-      return true;
-    }
+
     logAction('未找到确定/应用按钮');
     return false;
   }
 
-  async function runFilter(enabled, options, filterVipEnabled, filterVipManual, filterVipSchool, filterVipExchangeResume) {
+  async function runFilter(enabled, options, filterVipEnabled, filterVipManual, filterVipSchool, filterVipExchangeResume, filterVipRecentNotView, filterVipMajor) {
     if (!enabled) {
       logAction('筛选未启用，跳过');
       return;
@@ -1052,9 +1231,8 @@
       return;
     }
     await delaySeconds(0.5);
-    // 不点击「是否应用上次的筛选条件？」的取消，直接进行筛选
-    // 解决「点击在 A、面板在 B」：用实际包含筛选面板 DOM 的文档做应用与确定
-    const panelDoc = getFilterPanelDoc(docs) || doc;
+    // 筛选面板（.filter-panel / .filters-wrap）在主文档，优先用主文档
+    const panelDoc = getFilterPanelDoc([document, ...docs]) || getFilterPanelDoc(docs) || doc;
     if (panelDoc !== doc) logAction('筛选面板在另一文档，已切换至面板所在文档执行');
     const workDoc = panelDoc;
     await delaySeconds(0.2);
@@ -1067,12 +1245,14 @@
     if (useVip) {
       if (filterVipManual) logAction('已勾选「我是 VIP」，执行 VIP 筛选项');
       if (vipWraps.length > 0) {
-        await applyVipFilters(workDoc, filterVipSchool || [], filterVipExchangeResume || '近一个月没有');
+        await applyVipFilters(workDoc, filterVipSchool || [], filterVipExchangeResume || '近一个月没有', filterVipRecentNotView || '不限', filterVipMajor || []);
         await delaySeconds(0.2);
       } else {
         logAction('未检测到可用的 VIP 筛选项，跳过 VIP 筛选');
       }
     }
+    // 等待筛选项点击后 DOM 稳定，再查找确定按钮
+    await delaySeconds(0.5);
     let confirmed = await confirmFilter(workDoc);
     if (!confirmed) {
       for (const d of docs) {
@@ -1132,16 +1312,37 @@
   function getFilterDocs() {
     const iframeDoc = getRecommendDoc();
     const mainDoc = getJobDoc();
-    return iframeDoc === mainDoc ? [mainDoc] : [iframeDoc, mainDoc];
+    const topDoc = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window.top || window).document;
+    const all = [iframeDoc, mainDoc, topDoc, document].filter(Boolean);
+    // 去重
+    const seen = new Set();
+    return all.filter(d => {
+      if (seen.has(d)) return false;
+      seen.add(d);
+      return true;
+    });
   }
 
   /** 在哪个文档里真正出现了筛选面板 DOM（打开面板后调用，用于解决「点击在 A、面板在 B」导致的未生效） */
   function getFilterPanelDoc(docs) {
     if (!docs || !docs.length) return null;
+    // 优先找有筛选项 + 确定按钮的文档
+    for (const d of docs) {
+      const hasWrap = d.querySelector('.filters-wrap') || d.querySelector('.filter-wrap');
+      const hasName = d.querySelector('.filter-wrap .name') || d.querySelector('.filters-wrap .name');
+      const hasConfirm = [...(d.querySelectorAll('div.btn') || [])].some(el => (el.textContent || '').trim() === '确定');
+      if ((hasWrap || hasName) && hasConfirm) return d;
+    }
+    // 退而求其次：有筛选项 DOM 的文档
     for (const d of docs) {
       const hasWrap = d.querySelector('.filters-wrap') || d.querySelector('.filter-wrap');
       const hasName = d.querySelector('.filter-wrap .name') || d.querySelector('.filters-wrap .name');
       if (hasWrap || hasName) return d;
+    }
+    // 最后兜底：哪个文档有「确定」div.btn 就用哪个
+    for (const d of docs) {
+      const hasConfirm = [...(d.querySelectorAll('div.btn') || [])].some(el => (el.textContent || '').trim() === '确定');
+      if (hasConfirm) return d;
     }
     return null;
   }
@@ -1483,7 +1684,9 @@
         filterConfig.filterVipEnabled,
         filterConfig.filterVipManual,
         filterConfig.filterVipSchool,
-        filterConfig.filterVipExchangeResume
+        filterConfig.filterVipExchangeResume,
+        filterConfig.filterVipRecentNotView,
+        filterConfig.filterVipMajor
       );
       await runGreetingLoop(config, (e) => logAction(e), {
         runLimit: 0,
@@ -1537,7 +1740,9 @@
         filterConfig.filterVipEnabled,
         filterConfig.filterVipManual,
         filterConfig.filterVipSchool,
-        filterConfig.filterVipExchangeResume
+        filterConfig.filterVipExchangeResume,
+        filterConfig.filterVipRecentNotView,
+        filterConfig.filterVipMajor
       );
 
       await runGreetingLoop(config, (e) => logAction(e), {
